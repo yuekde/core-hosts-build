@@ -1,4 +1,4 @@
-// 构建时复制到 component/proxydialer 执行
+// 构建时复制到源码同一路径执行
 package proxydialer
 
 import (

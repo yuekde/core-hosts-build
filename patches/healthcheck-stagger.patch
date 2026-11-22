@@ -1,0 +1,55 @@
+健康检查：定时检查起点随机偏移，所有 provider 共用节点测试并发上限
+
+diff --git a/adapter/provider/healthcheck.go b/adapter/provider/healthcheck.go
+index 822a00d..ae8731f 100644
+--- a/adapter/provider/healthcheck.go
++++ b/adapter/provider/healthcheck.go
+@@ -2,6 +2,9 @@ package provider
+ 
+ import (
+ 	"context"
++	"math/rand"
++	"os"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -41,9 +44,23 @@ type HealthCheck struct {
+ 	timeout        time.Duration
+ }
+ 
++// healthCheckSem 为所有 provider 共用的节点测试并发上限，环境变量 HEALTH_CHECK_CONCURRENCY 可调，默认 10
++var healthCheckSem = make(chan struct{}, func() int {
++	if n, err := strconv.Atoi(os.Getenv("HEALTH_CHECK_CONCURRENCY")); err == nil && n > 0 {
++		return n
++	}
++	return 10
++}())
++
+ func (hc *HealthCheck) process() {
+-	ticker := time.NewTicker(hc.interval)
+ 	go hc.check()
++	// 定时检查起点随机偏移，错开各 provider 的检查时刻
++	select {
++	case <-time.After(time.Duration(rand.Int63n(int64(hc.interval)))):
++	case <-hc.ctx.Done():
++		return
++	}
++	ticker := time.NewTicker(hc.interval)
+ 	for {
+ 		select {
+ 		case <-ticker.C:
+@@ -178,6 +195,13 @@ func (hc *HealthCheck) execute(b *errgroup.Group, url, uid string, option *extra
+ 
+ 		p := proxy
+ 		b.Go(func() error {
++			// 等待并发名额的时间不计入超时
++			select {
++			case healthCheckSem <- struct{}{}:
++			case <-hc.ctx.Done():
++				return nil
++			}
++			defer func() { <-healthCheckSem }()
+ 			ctx, cancel := context.WithTimeout(hc.ctx, hc.timeout)
+ 			defer cancel()
+ 			log.Debugln("Health Checking, proxy: %s, url: %s, id: {%s}", p.Name(), url, uid)

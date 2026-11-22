@@ -2,7 +2,7 @@ name: build
 
 on:
   schedule:
-    - cron: "23 */6 * * *"
+    - cron: "0 17 * * *"   # UTC 17:00，北京时间 01:00
   workflow_dispatch:
   push:
     branches: [main]
@@ -58,37 +58,44 @@ jobs:
         if: steps.up.outputs.skip != '1'
         working-directory: src
         run: |
-          p=../patches/smart-hosts.patch
-          files="component/proxydialer/proxydialer.go adapter/adapter.go"
-          if git apply "$p"; then
-            # 校验备用脚本：在干净副本上写入，结果须与补丁一致
-            git worktree add -q --detach ../alt HEAD
-            if ! (cd ../alt && python3 ../scripts/apply.py) || [ "$(git -C ../alt diff -- $files)" != "$(git diff -- $files)" ]; then
-              echo "::warning::备用脚本结果与补丁不一致，需更新 scripts/apply.py"
+          all=""
+          for p in ../patches/*.patch; do
+            name=$(basename "$p" .patch)
+            files=$(sed -n 's#^diff --git a/\([^ ]*\) b/.*#\1#p' "$p")
+            all="$all $files"
+            if git apply "$p"; then
+              # 校验备用脚本：在干净副本上写入，结果须与补丁一致
+              git worktree add -q --detach ../alt HEAD
+              if ! (cd ../alt && python3 ../scripts/apply.py "$name") || [ "$(git -C ../alt diff -- $files)" != "$(git diff -- $files)" ]; then
+                echo "::warning::$name: 备用脚本结果与补丁不一致，需更新 scripts/apply.py"
+              fi
+              git worktree remove --force ../alt
+            else
+              echo "::warning::$name: 补丁上下文不符，已按锚点写入并重新生成补丁"
+              python3 ../scripts/apply.py "$name"
             fi
-          else
-            echo "::warning::补丁上下文不符，已按锚点写入并重新生成补丁"
-            python3 ../scripts/apply.py
-          fi
-          # 按本次源码重新生成补丁，构建成功后提交
-          { sed '/^diff --git/,$d' "$p"; git diff -- $files; } > "$p.new"
-          mv "$p.new" "$p"
+            # 按本次源码重新生成补丁，构建成功后提交；各补丁修改的文件不重叠
+            { sed '/^diff --git/,$d' "$p"; git diff -- $files; } > "$p.new"
+            mv "$p.new" "$p"
+          done
           # 内核自更新改取本仓库发布
           f=component/updater/update_core.go
           sed -i "s#github.com/vernesong/mihomo/releases/download/$TAG/#github.com/$GITHUB_REPOSITORY/releases/download/$TAG/#" "$f"
           [ "$(grep -c "github.com/$GITHUB_REPOSITORY/releases/download/$TAG/" "$f")" = 2 ]
           [ "$(grep -c 'ApplyHosts(' component/proxydialer/proxydialer.go)" = 2 ]
           [ "$(grep -c 'proxydialer.ApplyHosts(' adapter/adapter.go)" = 2 ]
-          test -z "$(gofmt -l component/proxydialer adapter/adapter.go)"
+          test -z "$(gofmt -l $all)"
           git diff --stat
 
       - name: 测试
         if: steps.up.outputs.skip != '1'
         working-directory: src
         run: |
-          cp ../tests/applyhosts_test.go component/proxydialer/
-          go vet ./component/proxydialer ./adapter ./component/updater
-          go test ./component/proxydialer
+          # tests/ 按源码路径存放
+          cp -r ../tests/. .
+          pkgs=$(cd ../tests && find . -name '*_test.go' -exec dirname {} \; | sort -u)
+          go vet $pkgs ./adapter ./component/updater
+          go test $pkgs
 
       - name: 编译
         if: steps.up.outputs.skip != '1'
@@ -109,7 +116,7 @@ jobs:
         run: |
           gh release delete "$TAG" --cleanup-tag -y || true
           gh release create "$TAG" out/*.gz out/version.txt out/checksums.txt --prerelease --target "$GITHUB_SHA" \
-            --title "$VERSION + hosts" \
+            --title "$VERSION + patches" \
             --notes "源码：vernesong/mihomo@$SHA；补丁：本仓库提交 $GITHUB_SHA 的 patches/"
 
       # 记录已构建的上游提交与对应补丁，同时保持仓库活动以免定时任务被停用
@@ -119,5 +126,5 @@ jobs:
           echo "$SHA" > upstream
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add upstream patches/smart-hosts.patch
+          git add upstream patches
           git diff --cached --quiet || { git commit -qm "build: $VERSION" && git pull -q --rebase && git push -q; }
