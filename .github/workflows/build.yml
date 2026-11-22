@@ -58,7 +58,21 @@ jobs:
         if: steps.up.outputs.skip != '1'
         working-directory: src
         run: |
-          git apply ../patches/smart-hosts.patch || python3 ../scripts/apply.py
+          p=../patches/smart-hosts.patch
+          files="component/proxydialer/proxydialer.go adapter/adapter.go"
+          if git apply "$p"; then
+            # 校验备用脚本：在干净副本上写入，结果须与补丁一致
+            git worktree add -q --detach ../alt HEAD
+            if ! (cd ../alt && python3 ../scripts/apply.py) || [ "$(git -C ../alt diff -- $files)" != "$(git diff -- $files)" ]; then
+              echo "::warning::备用脚本结果与补丁不一致，需更新 scripts/apply.py"
+            fi
+          else
+            echo "::warning::补丁上下文不符，已按锚点写入并重新生成补丁"
+            python3 ../scripts/apply.py
+          fi
+          # 按本次源码重新生成补丁，构建成功后提交
+          { sed '/^diff --git/,$d' "$p"; git diff -- $files; } > "$p.new"
+          mv "$p.new" "$p"
           # 内核自更新改取本仓库发布
           f=component/updater/update_core.go
           sed -i "s#github.com/vernesong/mihomo/releases/download/$TAG/#github.com/$GITHUB_REPOSITORY/releases/download/$TAG/#" "$f"
@@ -98,12 +112,12 @@ jobs:
             --title "$VERSION + hosts" \
             --notes "源码：vernesong/mihomo@$SHA；补丁：本仓库提交 $GITHUB_SHA 的 patches/"
 
-      # 记录已构建的上游提交，同时保持仓库活动以免定时任务被停用
+      # 记录已构建的上游提交与对应补丁，同时保持仓库活动以免定时任务被停用
       - name: 记录
         if: steps.up.outputs.skip != '1'
         run: |
           echo "$SHA" > upstream
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add upstream
+          git add upstream patches/smart-hosts.patch
           git diff --cached --quiet || { git commit -qm "build: $VERSION" && git pull -q --rebase && git push -q; }
