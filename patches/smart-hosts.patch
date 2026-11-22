@@ -1,0 +1,70 @@
+Smart 分支：dialer-proxy 拨号、健康检查与 Smart 探测前按 hosts 改写目标
+
+diff --git a/adapter/adapter.go b/adapter/adapter.go
+index 6db1e6e..6f20995 100644
+--- a/adapter/adapter.go
++++ b/adapter/adapter.go
+@@ -18,6 +18,7 @@ import (
+ 	"github.com/metacubex/mihomo/common/xsync"
+ 	"github.com/metacubex/mihomo/component/ca"
+ 	"github.com/metacubex/mihomo/component/mmdb"
++	"github.com/metacubex/mihomo/component/proxydialer"
+ 	"github.com/metacubex/mihomo/component/smart"
+ 	"github.com/metacubex/mihomo/component/tls"
+ 	C "github.com/metacubex/mihomo/constant"
+@@ -223,6 +224,7 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
+ 	if err != nil {
+ 		return
+ 	}
++	proxydialer.ApplyHosts(&addr)
+ 
+ 	start := time.Now()
+ 	instance, err := p.DialContext(ctx, &addr)
+@@ -528,6 +530,7 @@ func (p *Proxy) statusRequest(ctx context.Context, rawURL string, extraHeader ht
+ 		if err := metadata.SetRemoteAddress(targetAddr); err != nil {
+ 			return nil, err
+ 		}
++		proxydialer.ApplyHosts(&metadata)
+ 		return p.DialContext(dialCtx, &metadata)
+ 	}
+ 
+diff --git a/component/proxydialer/proxydialer.go b/component/proxydialer/proxydialer.go
+index 78cf12e..fc6a6c1 100644
+--- a/component/proxydialer/proxydialer.go
++++ b/component/proxydialer/proxydialer.go
+@@ -8,6 +8,7 @@ import (
+ 	"strings"
+ 
+ 	N "github.com/metacubex/mihomo/common/net"
++	"github.com/metacubex/mihomo/component/resolver"
+ 	C "github.com/metacubex/mihomo/constant"
+ 	"github.com/metacubex/mihomo/tunnel/statistic"
+ )
+@@ -21,11 +22,27 @@ func New(proxy C.ProxyAdapter, statistic bool) C.Dialer {
+ 	return proxyDialer{proxy: proxy, statistic: statistic}
+ }
+ 
++// ApplyHosts 按 hosts 改写目标：IP 记录改为 IP，域名记录改为映射后的域名
++func ApplyHosts(metadata *C.Metadata) {
++	if metadata.Host == "" {
++		return
++	}
++	node, ok := resolver.DefaultHosts.Search(metadata.Host, false)
++	if ok {
++		if ip, err := node.RandIP(); err == nil {
++			metadata.DstIP, metadata.Host = ip, ""
++		}
++	} else if node != nil && node.IsDomain {
++		metadata.Host = node.Domain
++	}
++}
++
+ func (p proxyDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+ 	currentMeta := &C.Metadata{Type: C.INNER}
+ 	if err := currentMeta.SetRemoteAddress(address); err != nil {
+ 		return nil, err
+ 	}
++	ApplyHosts(currentMeta)
+ 	if strings.Contains(network, "udp") { // using in wireguard outbound
+ 		pc, err := p.listenPacket(ctx, currentMeta)
+ 		if err != nil {
