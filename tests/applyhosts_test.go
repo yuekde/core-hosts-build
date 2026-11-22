@@ -12,20 +12,25 @@ import (
 
 func TestApplyHosts(t *testing.T) {
 	ip := netip.MustParseAddr("1.2.3.4")
-	tr := trie.New[resolver.HostValue]()
-	add := func(domain string, v resolver.HostValue, err error) {
+	must := func(v resolver.HostValue, err error) resolver.HostValue {
 		if err != nil {
 			t.Fatal(err)
 		}
+		return v
+	}
+	ips := must(resolver.NewHostValueByIPs([]netip.Addr{ip}))
+	tr := trie.New[resolver.HostValue]()
+	for domain, v := range map[string]resolver.HostValue{
+		"test.com": ips,
+		"a.com":    must(resolver.NewHostValueByDomain("b.com")),
+		"c.com":    must(resolver.NewHostValueByDomain("d.com")),
+		"d.com":    ips,
+		"+.w.com":  ips,
+	} {
 		if err := tr.Insert(domain, v); err != nil {
 			t.Fatal(err)
 		}
 	}
-	add("test.com", resolver.NewHostValueByIPs([]netip.Addr{ip}))
-	add("a.com", resolver.NewHostValueByDomain("b.com"))
-	add("c.com", resolver.NewHostValueByDomain("d.com"))
-	add("d.com", resolver.NewHostValueByIPs([]netip.Addr{ip}))
-	add("+.w.com", resolver.NewHostValueByIPs([]netip.Addr{ip}))
 
 	old := resolver.DefaultHosts
 	resolver.DefaultHosts = resolver.NewHosts(tr)
