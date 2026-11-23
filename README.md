@@ -34,7 +34,7 @@ vernesong/mihomo `Alpha` 分支（Smart）源码加补丁后的 linux-amd64 构�
 | 文件 | 说明 |
 |---|---|
 | `mihomo-linux-amd64-v1-<版本>.gz` | `GOAMD64=v1`、`CGO_ENABLED=0`、`-tags with_gvisor`，Go 1.26（MetaCubeX/go） |
-| `version.txt` | `alpha-smart-<上游短提交>-hosts-<本仓库短提交>`，与 `mihomo -v` 一致；本仓库提交指构建所用的补丁版本 |
+| `version.txt` | `alpha-smart-<上游短提交>`，与上游版本号格式相同；上游提交不变时补丁变更不改变版本号，内核自更新（按字符串比较版本号）不会拉取该次构建 |
 | `checksums.txt` | SHA-256 |
 
 ```sh
