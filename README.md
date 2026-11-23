@@ -16,6 +16,17 @@ vernesong/mihomo `Alpha` 分支（Smart）源码加补丁后的 linux-amd64 构�
 
 构建时另将 `component/updater/update_core.go` 的 Alpha 下载地址改为本仓库 `Prerelease-Alpha`，内核自更新取本仓库文件。
 
+## 限制
+
+`smart-hosts.patch` 只改写交给前置节点的目标地址。TLS 类落地节点（VLESS、Trojan、VMess、AnyTLS 等开启 TLS 时）的 SNI 以明文经过前置节点，SNI 取 `servername` / `sni`，未设置时为 `server` 域名；非 TLS 的 WebSocket、HTTP 传输中 `Host` 头同样为明文。前置节点服务端开启嗅探并覆盖目标时，以该域名替换 IP 后自行解析，hosts 中的自定义域名在前置节点无法解析，连接失败。客户端无法关闭服务端嗅探。Shadowsocks 等不含明文域名的协议不受影响。
+
+前置节点服务端覆盖目标的配置：mihomo `sniffer` 启用且目标端口在嗅探端口内（`parse-pure-ip`、`override-destination` 默认均为 `true`）；Xray `sniffing` 启用 `destOverride` 且未设置 `routeOnly: true`。
+
+| 处理方法 | 条件 |
+|---|---|
+| 前置节点服务端不覆盖目标：mihomo `sniffer.override-destination: false`，或落地 IP 加入 `skip-dst-address`；Xray `sniffing.routeOnly: true` | 可修改前置节点服务端配置 |
+| 落地节点 `servername` / `sni` 写落地 IP，TLS 不发送 SNI | 落地服务端在无 SNI 时返回该节点证书；证书校验需证书含该 IP，或配置 `fingerprint`、`skip-cert-verify`；不适用于 Reality 与按 SNI 分流的服务端 |
+
 ## 发布
 
 标签 `Prerelease-Alpha`（预发布），每次构建替换。
